@@ -1,0 +1,39 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- AI Sparkle Left -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M30,35 Q35,35 35,30 Q35,35 40,35 Q35,35 35,40 Q35,35 30,35 Z" />
+        
+    <!-- AI Sparkle Right -->
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M70,28 Q75,28 75,23 Q75,28 80,28 Q75,28 75,33 Q75,28 70,28 Z" />
+
+    <!-- Chef Hat Bulbs / Top Part -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,34 
+                   C44,34 38,40 40,48 
+                   C36,52 38,62 46,64 
+                   L62,64 
+                   C70,62 72,52 68,48 
+                   C70,40 64,34 54,34 Z" />
+                   
+    <!-- Chef Hat Brim/Band -->
+    <path
+        android:fillColor="#A9DFBF"
+        android:pathData="M44,66 L64,66 C65,66 66,67 66,68 L66,72 C66,73 65,74 64,74 L44,74 C43,74 42,73 42,72 L42,68 C42,67 43,66 44,66 Z" />
+        
+    <!-- Premium Chef Hat Details (Sleek inner line) -->
+    <path
+        android:fillColor="#1C2C22"
+        android:pathData="M50,42 C50,42 52,38 54,38 C56,38 58,42 58,42 C58,42 61,42 61,45"
+        android:strokeColor="#1C2C22"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round" />
+</vector>

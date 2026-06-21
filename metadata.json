@@ -1,5 +1,5 @@
 {
-  "name": "CookMate AI",
+  "name": "CookMate",
   "description": "An advanced AI-powered recipe, nutrition, meal-planning, and smart cooking assistant platform.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

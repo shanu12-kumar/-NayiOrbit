@@ -64,7 +64,7 @@ class CookMateRepository(
             output ?: "No culinary insights generated. Please attempt again."
         } catch (e: Exception) {
             Log.e("CookMateRepository", "Gemini error", e)
-            "Error calling CookMate AI: ${e.localizedMessage}. Falling back to offline cookbook."
+            "Error calling CookMate: ${e.localizedMessage}. Falling back to offline cookbook."
         }
     }
 
@@ -293,7 +293,7 @@ class CookMateRepository(
         val lower = prompt.lowercase()
         return when {
             lower.contains("substitute") || lower.contains("alternative") -> """
-                CookMate AI Substitute Engine:
+                CookMate Substitute Engine:
                 For missing ingredients, here are clinical & allergen-safe replacements:
                 1. Butter -> Extra Virgin Olive Oil (1:1) or Mashed Avocado (for moist baking).
                 2. Paneer/Cheese -> Extra Firm Organic Tofu or Cashew Nut Cheese.
@@ -323,7 +323,7 @@ class CookMateRepository(
                 - Pro-tip: Hydrate with 3.2L filtered water daily and include 35g fiber to optimize metabolic rate and stamina.
             """.trimIndent()
             else -> """
-                Welcome to CookMate AI. Add your official API key in the Secrets Panel to gain unlimited real-time AI recipe generation, personalized nutrition consultations, and Fridge Scans. 
+                Welcome to CookMate. Add your official API key in the Secrets Panel to gain unlimited real-time AI recipe generation, personalized nutrition consultations, and Fridge Scans. 
                 
                 For this offline session: Simulating Masterchef Cooking Mode. Let us cook healthy culinary triumphs together!
             """.trimIndent()

@@ -189,7 +189,7 @@ class CookMateViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val response = repository.askGemini(
                 prompt = text,
-                systemInstruction = "You are CookMate AI Chef, an expert culinary master, micro-nutritionist, and friendly advisor. Answer kitchen queries under 3 sentences with warmth and precision."
+                systemInstruction = "You are CookMate Chef, an expert culinary master, micro-nutritionist, and friendly advisor. Answer kitchen queries under 3 sentences with warmth and precision."
             )
             val chefMsg = ChatMessage(sender = "Chef AI", text = response)
             _chatMessages.update { it + chefMsg }

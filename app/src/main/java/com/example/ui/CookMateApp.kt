@@ -2288,7 +2288,7 @@ fun RecipeDetailScreen(
                 Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary)
             }
             Text(
-                text = "CookMate AI Lab",
+                text = "CookMate Lab",
                 fontWeight = FontWeight.Bold,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary

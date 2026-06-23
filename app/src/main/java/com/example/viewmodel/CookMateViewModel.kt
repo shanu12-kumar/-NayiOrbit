@@ -109,6 +109,37 @@ class CookMateViewModel(application: Application) : AndroidViewModel(application
         _selectedCuisineFilter.value = cuisine
     }
 
+    fun completeOnboarding(
+        dietaryPref: String,
+        recPreference: String,
+        fitnessGoal: String,
+        preferredCuisines: String
+    ) {
+        viewModelScope.launch {
+            val current = repository.getProfile() ?: UserProfileEntity()
+            repository.saveProfile(
+                current.copy(
+                    dietaryPref = dietaryPref,
+                    recPreference = recPreference,
+                    fitnessGoal = fitnessGoal,
+                    preferredCuisines = preferredCuisines,
+                    isOnboarded = true
+                )
+            )
+        }
+    }
+
+    fun resetOnboarding() {
+        viewModelScope.launch {
+            val current = repository.getProfile() ?: UserProfileEntity()
+            repository.saveProfile(
+                current.copy(
+                    isOnboarded = false
+                )
+            )
+        }
+    }
+
     // Toggle Favorite
     fun toggleFavorite(recipe: RecipeEntity) {
         viewModelScope.launch {

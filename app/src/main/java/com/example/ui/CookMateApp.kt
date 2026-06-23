@@ -59,7 +59,7 @@ fun CookMateApp(
 
     Scaffold(
         bottomBar = {
-            if (activeRecipe == null) {
+            if (activeRecipe == null && userProfile.isOnboarded) {
                 CookMateBottomBar(currentTab = currentTab, language = appLanguage)
             }
         },
@@ -68,34 +68,38 @@ fun CookMateApp(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .padding(if (userProfile.isOnboarded) innerPadding else PaddingValues(0.dp))
         ) {
-            AnimatedContent(
-                targetState = activeRecipe,
-                transitionSpec = {
-                    slideInVertically(initialOffsetY = { it }, animationSpec = tween(300)) togetherWith
-                            slideOutVertically(targetOffsetY = { it }, animationSpec = tween(300))
-                },
-                label = "RecipeDetailAndCore"
-            ) { targetRecipe ->
-                if (targetRecipe != null) {
-                    RecipeDetailScreen(
-                        recipe = targetRecipe,
-                        viewModel = viewModel,
-                        onClose = { viewModel.closeGuidance() }
-                    )
-                } else {
-                    Crossfade(
-                        targetState = currentTab.value,
-                        animationSpec = tween(200),
-                        label = "TabSwitcher"
-                    ) { tab ->
-                        when (tab) {
-                            "Home" -> HomeScreen(viewModel, onTabSelect = { currentTab.value = it })
-                            "Kitchen" -> AIKitchenScreen(viewModel)
-                            "Planner" -> MealPlannerScreen(viewModel)
-                            "Groceries" -> GroceryListScreen(viewModel)
-                            "Profile" -> UserProfileScreen(viewModel)
+            if (!userProfile.isOnboarded) {
+                OnboardingScreen(viewModel = viewModel)
+            } else {
+                AnimatedContent(
+                    targetState = activeRecipe,
+                    transitionSpec = {
+                        slideInVertically(initialOffsetY = { it }, animationSpec = tween(300)) togetherWith
+                                slideOutVertically(targetOffsetY = { it }, animationSpec = tween(300))
+                    },
+                    label = "RecipeDetailAndCore"
+                ) { targetRecipe ->
+                    if (targetRecipe != null) {
+                        RecipeDetailScreen(
+                            recipe = targetRecipe,
+                            viewModel = viewModel,
+                            onClose = { viewModel.closeGuidance() }
+                        )
+                    } else {
+                        Crossfade(
+                            targetState = currentTab.value,
+                            animationSpec = tween(200),
+                            label = "TabSwitcher"
+                        ) { tab ->
+                            when (tab) {
+                                "Home" -> HomeScreen(viewModel, onTabSelect = { currentTab.value = it })
+                                "Kitchen" -> AIKitchenScreen(viewModel)
+                                "Planner" -> MealPlannerScreen(viewModel)
+                                "Groceries" -> GroceryListScreen(viewModel)
+                                "Profile" -> UserProfileScreen(viewModel)
+                            }
                         }
                     }
                 }
@@ -201,8 +205,62 @@ fun HomeScreen(viewModel: CookMateViewModel, onTabSelect: (String) -> Unit) {
     val groceries by viewModel.groceryList.collectAsStateWithLifecycle()
     val isHindi = userProfile.language == "Hindi"
 
-    val featuredRecipe = remember(favorites, allRecipes) {
-        favorites.firstOrNull() ?: allRecipes.firstOrNull() ?: getPredefinedRecommendations(isHindi).firstOrNull()
+    val baseList = if (allRecipes.isNotEmpty()) allRecipes else getPredefinedRecommendations(isHindi)
+
+    val featuredRecipe = remember(favorites, baseList) {
+        favorites.firstOrNull() ?: baseList.firstOrNull()
+    }
+
+    // RECOMMENDATION CHANNELS CALCULATIONS
+    val forYouList = remember(baseList, userProfile) {
+        val diet = userProfile.dietaryPref
+        baseList.filter { recipe ->
+            when (diet) {
+                "Vegetarian" -> !recipe.tags.lowercase().contains("chicken") && !recipe.tags.lowercase().contains("non-veg") && !recipe.name.lowercase().contains("chicken")
+                "Vegan" -> recipe.tags.lowercase().contains("vegan")
+                "Jain" -> recipe.tags.lowercase().contains("jain")
+                else -> true
+            }
+        }.sortedByDescending { if (userProfile.recPreference == "Health First") it.healthScore else it.tasteScore }
+    }
+
+    val trendingList = remember(baseList) {
+        baseList.sortedByDescending { it.rating }
+    }
+
+    val tasteList = remember(baseList) {
+        baseList.sortedByDescending { it.tasteScore }
+    }
+
+    val healthyList = remember(baseList) {
+        baseList.filter { it.healthScore >= 7.8f }.sortedByDescending { it.healthScore }
+    }
+
+    val quickList = remember(baseList) {
+        baseList.filter { it.prepTime.contains("15") || it.prepTime.contains("10") || it.tags.contains("Easy") }
+    }
+
+    val budgetList = remember(baseList) {
+        baseList.filter { it.tags.contains("Budget") || it.tags.contains("Jain") || it.calories < 300 }
+    }
+
+    val similarList = remember(baseList, favorites) {
+        if (favorites.isNotEmpty()) {
+            val favNames = favorites.map { it.name.lowercase() }
+            baseList.filter { r ->
+                r.name.lowercase() !in favNames && (
+                    favNames.any { f -> f.contains("paneer") && (r.name.contains("Paneer") || r.name.contains("पनीर")) } ||
+                    favNames.any { f -> f.contains("chicken") && (r.name.contains("Chicken") || r.name.contains("चिकन")) } ||
+                    favNames.any { f -> f.contains("salad") && r.category == "Lunch" }
+                )
+            }
+        } else {
+            baseList.take(3)
+        }
+    }
+
+    val seasonalList = remember(baseList) {
+        baseList.filter { it.tags.contains("Vegan") || it.tags.contains("Gluten Free") || it.name.contains("Avocado") || it.name.contains("एवोकैडो") }
     }
 
     LazyColumn(
@@ -215,7 +273,7 @@ fun HomeScreen(viewModel: CookMateViewModel, onTabSelect: (String) -> Unit) {
             HomeGreetingBanner(profile = userProfile, isHindi = isHindi)
         }
 
-        // BENTO GRID DASHBOARD
+        // BENTO GRID DASHBOARD (UX Hub)
         item {
             Column(
                 modifier = Modifier
@@ -286,49 +344,133 @@ fun HomeScreen(viewModel: CookMateViewModel, onTabSelect: (String) -> Unit) {
             })
         }
 
-        // Saved Recipes shortcuts
+        // NETFLIX-STYLE STREAM SHELVES
+        // 1. FOR YOU SHELF
         item {
             SectionHeader(
-                title = if (isHindi) "पसंदीदा व्यंजन" else "Saved Recipes Shortcut",
-                actionText = if (favorites.isNotEmpty()) (if (isHindi) "सभी देखें" else "View All") else null
+                title = if (isHindi) "⭐ आपके लिए सिफारिशें" else "⭐ For You Recommendations",
+                actionText = if (isHindi) "${userProfile.dietaryPref} मोड" else "${userProfile.dietaryPref} Mode"
             )
-
-            if (favorites.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                        .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)), RoundedCornerShape(28.dp))
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Outlined.Favorite,
-                            contentDescription = "No Favorites",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.size(36.dp)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = if (isHindi) "कोई पसंदीदा सहेज नहीं गया है। रसोई टैब से जोड़ें!" else "No saved recipes yet. Mark heart on any AI generation!",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            textAlign = TextAlign.Center
-                        )
-                    }
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(forYouList) { recipe ->
+                    RecommendationCard(recipe = recipe, onClick = { viewModel.startRecipeGuidance(recipe) })
                 }
-            } else {
+            }
+        }
+
+        // 2. TRENDING RECIPES SHELF
+        item {
+            SectionHeader(
+                title = if (isHindi) "🔥 लोकप्रिय व्यंजन" else "🔥 Trending Recipes"
+            )
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(trendingList) { recipe ->
+                    RecommendationCard(recipe = recipe, onClick = { viewModel.startRecipeGuidance(recipe) })
+                }
+            }
+        }
+
+        // 3. BASED ON YOUR TASTE SHELF
+        item {
+            SectionHeader(
+                title = if (isHindi) "😋 आपके स्वादानुसार" else "😋 Based On Your Taste"
+            )
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(tasteList) { recipe ->
+                    RecommendationCard(recipe = recipe, onClick = { viewModel.startRecipeGuidance(recipe) })
+                }
+            }
+        }
+
+        // 4. HEALTHY PICKS SHELF
+        if (healthyList.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = if (isHindi) "🥗 स्वास्थ्य वर्धक व्यंजन" else "🥗 Healthy Picks For You"
+                )
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    items(favorites) { item ->
-                        RecommendationCard(recipe = item, onClick = {
-                            viewModel.startRecipeGuidance(item)
-                        })
+                    items(healthyList) { recipe ->
+                        RecommendationCard(recipe = recipe, onClick = { viewModel.startRecipeGuidance(recipe) })
+                    }
+                }
+            }
+        }
+
+        // 5. QUICK MEALS SHELF
+        if (quickList.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = if (isHindi) "⚡ त्वरित तैयार भोजन" else "⚡ Quick Meals"
+                )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    items(quickList) { recipe ->
+                        RecommendationCard(recipe = recipe, onClick = { viewModel.startRecipeGuidance(recipe) })
+                    }
+                }
+            }
+        }
+
+        // 6. BUDGET FRIENDLY SHELF
+        if (budgetList.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = if (isHindi) "💰 किफायती पौष्टिक विकल्प" else "💰 Budget Friendly Recipes"
+                )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    items(budgetList) { recipe ->
+                        RecommendationCard(recipe = recipe, onClick = { viewModel.startRecipeGuidance(recipe) })
+                    }
+                }
+            }
+        }
+
+        // 7. SIMILAR TO YOUR SAVED RECIPES SHELF
+        if (favorites.isNotEmpty() && similarList.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = if (isHindi) "🍛 आपके सहेजे व्यंजनों के समान" else "🍛 Similar To Your Saved Recipes"
+                )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    items(similarList) { recipe ->
+                        RecommendationCard(recipe = recipe, onClick = { viewModel.startRecipeGuidance(recipe) })
+                    }
+                }
+            }
+        }
+
+        // 8. SEASONAL & FESTIVAL RECIPES SHELF
+        if (seasonalList.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = if (isHindi) "🎉 विशेष एवं त्यौहार व्यंजन" else "🎉 Seasonal & Festival Recipes"
+                )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    items(seasonalList) { recipe ->
+                        RecommendationCard(recipe = recipe, onClick = { viewModel.startRecipeGuidance(recipe) })
                     }
                 }
             }
@@ -963,6 +1105,7 @@ fun BentoGroceryCard(
 
 // ---------------- REST OF HOME COMPOSABLES WITH BENTO EDITS ----------------
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RecommendationCard(recipe: RecipeEntity, onClick: () -> Unit) {
     Card(
@@ -970,14 +1113,14 @@ fun RecommendationCard(recipe: RecipeEntity, onClick: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
         modifier = Modifier
-            .width(200.dp)
+            .width(220.dp)
             .clickable(onClick = onClick)
     ) {
         Column {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(110.dp)
+                    .height(115.dp)
                     .background(
                         Brush.linearGradient(
                             colors = listOf(
@@ -988,18 +1131,55 @@ fun RecommendationCard(recipe: RecipeEntity, onClick: () -> Unit) {
                     ),
                 contentAlignment = Alignment.Center
             ) {
+                // Category overlay badge
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = recipe.category.uppercase(java.util.Locale.getDefault()),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 8.sp
+                    )
+                }
+
                 Icon(
-                    imageVector = when (recipe.name) {
-                        "Avocado Chia Pudding", "एवोकैडो चिया पुडिंग" -> Icons.Outlined.Icecream
-                        "Mediterranean Salad Bowl", "भूमध्यसागरीय सलाद" -> Icons.Outlined.Spa
+                    imageVector = when {
+                        recipe.id.contains("avoc") || recipe.name.contains("Chiapudding") || recipe.name.contains("चिया") -> Icons.Outlined.Icecream
+                        recipe.name.contains("Paneer") || recipe.name.contains("पनीर") -> Icons.Outlined.LocalPizza
+                        recipe.name.contains("Pulav") || recipe.name.contains("पुलाव") -> Icons.Outlined.Grass
+                        recipe.name.contains("Chicken") || recipe.name.contains("चिकन") -> Icons.Outlined.Restaurant
                         else -> Icons.Outlined.RestaurantMenu
                     },
                     contentDescription = recipe.name,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(48.dp)
+                    modifier = Modifier.size(54.dp)
                 )
+
+                // Rating overlay badge
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = 0.61f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(imageVector = Icons.Filled.Star, contentDescription = "Rating", tint = Color(0xFFFFC107), modifier = Modifier.size(10.dp))
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Text(text = "${recipe.rating}", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
-            Column(modifier = Modifier.padding(14.dp)) {
+
+            Column(modifier = Modifier.padding(12.dp)) {
                 Text(
                     text = recipe.name,
                     style = MaterialTheme.typography.titleSmall,
@@ -1008,44 +1188,54 @@ fun RecommendationCard(recipe: RecipeEntity, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                Text(
-                    text = recipe.category.uppercase(java.util.Locale.getDefault()),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.Bold
-                )
+                Spacer(modifier = Modifier.height(2.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Filled.AccessTime, contentDescription = "Time", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(12.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(text = "${recipe.prepTime} / ${recipe.cookTime}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
+
+                // TASTE & HEALTH SCORES
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .padding(6.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "${recipe.calories} kcal",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Black
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.AccessTime,
-                            contentDescription = "Time",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(10.dp)
-                        )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(
-                            text = recipe.prepTime,
-                            fontSize = 9.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Bold
-                        )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(text = "Taste", fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+                        Text(text = "${recipe.tasteScore}/10", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Black)
+                    }
+                    Box(modifier = Modifier.width(1.dp).height(16.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)))
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(text = "Health", fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+                        Text(text = "${recipe.healthScore}/10", fontSize = 10.sp, color = ForestGreen, fontWeight = FontWeight.Black)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // TAG BADGERS
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    maxItemsInEachRow = 2
+                ) {
+                    recipe.tags.split(",").filter { it.isNotBlank() }.take(2).forEach { tag ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(text = tag.trim(), fontSize = 8.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
                     }
                 }
             }
@@ -2245,6 +2435,17 @@ fun UserProfileScreen(viewModel: CookMateViewModel) {
                     ) {
                         Text(text = if (isHindi) "प्रोफाइल सहेजें" else "Save & Sync Demographics")
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    OutlinedButton(
+                        onClick = { viewModel.resetOnboarding() },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text(text = if (isHindi) "ओनबोर्डिंग फिर से शुरू करें (ऑनबोर्डिंग रीसेट)" else "Reset Onboarding Wizard")
+                    }
                 }
             }
         }
@@ -2740,16 +2941,104 @@ fun getPredefinedRecommendations(isHindi: Boolean): List<RecipeEntity> {
                 ingredients = "- 3 tbsp Chia seeds\n- 1 cup Almond milk (unsweetened)\n- 1/2 ripe Avocado\n- 1 tsp Honey\n- 5 Blueberries",
                 instructions = "1. Whisk chia seeds, honey, and almond milk inside a bowl. Keep in the fridge for at least 2 hours.\n2. Layer pureed ripe avocado onto the pudding base.\n3. Add sliced almonds & fresh blueberries on top. Best served cold.",
                 calories = 280,
+                protein = "8g",
+                carbohydrates = "32g",
+                fat = "12g",
+                fiber = "11g",
+                rating = 4.8f,
+                tasteScore = 8.5f,
+                healthScore = 9.2f,
+                tags = "Weight Loss, Vegan",
                 isFavorite = false
             ),
             RecipeEntity(
                 id = "reco_002",
-                name = "भूमध्यसागरीय सलाद",
+                name = "कढ़ाई पनीर मैजिक",
                 category = "Lunch",
-                description = "A colorful high-protein Mediterranean super bowl filled with organic boiled quinoa, rich cherry tomatoes, crunchy cucumber, tossed in lemon vinaigrette.",
-                ingredients = "- 1 cup Cooked Quinoa\n- 1/2 cup Chickpeas\n- 1 Cucumber, diced\n- 5 Olive slices\n- 1 tbsp olive oil\n- 1 tbsp lemon juice",
-                instructions = "1. Boil quinoa completely and let cool down.\n2. Toss diced cucumber, boiled chickpeas, olives, and fresh lemon-olive-oil vinaigrette inside a spacious mixing bowl.\n3. Garnish with mint sprigs. Quick, balanced, organic.",
-                calories = 420,
+                description = "शाही स्वाद से भरपूर ताज़ा पनीर, कटी हुई ताज़ा शिमला मिर्च और सुगंधित भुने हुए खड़े मसालों के साथ पकाया गया स्वादिष्ट भारतीय व्यंजन।",
+                ingredients = "- 200g पनीर क्यूब्स\n- 1 शिमला मिर्च, कटी हुई\n- 1 प्याज, कटा हुआ\n- 2 टमाटर की प्यूरी\n- 1 चम्मच कढ़ाई मसाला\n- 1 बड़ा चम्मच तेल",
+                instructions = "1. एक कढ़ाई में तेल गरम करें और प्याज, शिमला मिर्च को हल्का भूनें।\n2. टमाटर की प्यूरी और कढ़ाई मसाला जोड़ें, धीमी आंच पर 5 मिनट पकाएं।\n3. पनीर के टुकड़े डालें, स्वादानुसार नमक मिलाएं और गर्म नान अथवा रोटी के साथ परोसें।",
+                calories = 380,
+                protein = "18g",
+                carbohydrates = "14g",
+                fat = "28g",
+                fiber = "4g",
+                rating = 4.9f,
+                tasteScore = 9.6f,
+                healthScore = 7.5f,
+                tags = "High Protein, Indian",
+                isFavorite = false
+            ),
+            RecipeEntity(
+                id = "reco_003",
+                name = "जैन मिलेट पुलाव",
+                category = "Lunch",
+                description = "बिना कंदमूल (नो प्याज, नो लहसुन) के जैविक बाजरे, ताजी हरी मटर और शिमला मिर्च से बना संतुलित पौष्टिक जैन पुलाव।",
+                ingredients = "- 1 कप बाजरा (भीगा हुआ)\n- 1/4 कप हरी मटर\n- 1/2 शिमला मिर्च\n- 1 चम्मच शुद्ध देसी घी\n- चुटकी भर हींग, जीरा, हल्दी",
+                instructions = "1. भीगे बाजरे को नमक डालकर कुकर में 2 सीटी आने तक उबाल लें।\n2. एक पैन में घी गरम करें, उसमें जीरा, हींग और हल्दी छिड़कें।\n3. उबला बाजरा और मटर-शिमला मिर्च डालें, अच्छी तरह मिलाकर हरा धनिया सजाएं।",
+                calories = 260,
+                protein = "9g",
+                carbohydrates = "48g",
+                fat = "5g",
+                fiber = "8g",
+                rating = 4.6f,
+                tasteScore = 8.6f,
+                healthScore = 8.9f,
+                tags = "Jain, Budget, Gluten Free",
+                isFavorite = false
+            ),
+            RecipeEntity(
+                id = "reco_004",
+                name = "बटर चिकन डिलक्स",
+                category = "Dinner",
+                description = "धीमी आंच पर तंदूरी तवे पर भुने हुए चिकन के रसदार टुकड़े, मखमली मलाईदार टमाटर-काजू की ग्रेवी में पके हुए।",
+                ingredients = "- 300g चिकन ब्रेस्ट\n- 1 कप टमाटर का पेस्ट\n- 1/4 कप कसूरी मेथी\n- 2 बड़े चम्मच मलाई\n- 1 बड़ा चम्मच मक्खन\n- काजू का पेस्ट",
+                instructions = "1. चिकन को दही और मसालों के साथ मैरीनेट करके 20 मिनट के लिए बेक करें।\n2. मक्खन में टमाटर प्यूरी और काजू पेस्ट को अच्छी तरह भूनकर गाढ़ी ग्रेवी तैयार करें।\n3. चिकन डालें, मलाई और कसूरी मेथी डालकर गरमा गरम परोसें।",
+                calories = 490,
+                protein = "38g",
+                carbohydrates = "12g",
+                fat = "32g",
+                fiber = "2g",
+                rating = 4.9f,
+                tasteScore = 9.8f,
+                healthScore = 6.4f,
+                tags = "High Protein, Family Meals",
+                isFavorite = false
+            ),
+            RecipeEntity(
+                id = "reco_005",
+                name = "टोफू स्टिर-फ्राई नूडल्स",
+                category = "Dinner",
+                description = "चीनी शैली में बने स्वादिष्ट नूडल्स, कुरकुरे टोफू के टुकड़ों, ब्रोकली और मीठी सोया सॉस के साथ तेज आंच पर भुने हुए।",
+                ingredients = "- 100g नूडल्स (उबले)\n- 50g टोफू स्ट्रिप्स\n- 1/2 कप ब्रोकली फूल\n- 1 बड़ा चम्मच डार्क सोया सॉस\n- 1 चम्मच तिल का तेल",
+                instructions = "1. टोफू को धीमी आंच पर कुरकुरा होने तक सेक लें।\n2. तेज आंच पर पैन में तेल गरम करके ब्रोकली भूनें, उबले नूडल्स और सॉस डालें।\n3. कुरकुरा टोफू डालें, अच्छी तरह मिलाकर तुरंत परोसें।",
+                calories = 340,
+                protein = "14g",
+                carbohydrates = "52g",
+                fat = "10g",
+                fiber = "4g",
+                rating = 4.7f,
+                tasteScore = 9.1f,
+                healthScore = 7.9f,
+                tags = "Quick Meal, Kid Friendly",
+                isFavorite = false
+            ),
+            RecipeEntity(
+                id = "reco_006",
+                name = "हाई प्रोटीन पनीर भुर्जी",
+                category = "Breakfast",
+                description = "कम वसा वाले घर के ताज़ा छिना पनीर को प्याज, टमाटर और हरी मिर्च के साथ भूनकर बनाई गई बेहद लोकप्रिय प्रोटीन रेसिपी।",
+                ingredients = "- 150g पनीर, मसला हुआ\n- 1 प्याज, बारीक कटा\n- 1 टमाटर, बारीक कटा\n- 1 हरी मिर्च\n- हरा धनिया, जीरा",
+                instructions = "1. पैन में हल्का तेल गरम करें, जीरा चटकाएं और प्याज-मिर्च को पारदर्शी होने तक भूनें।\n2. बारीक कटे टमाटर डालें और गलने तक पकाएं।\n3. मसला पनीर और धनिया पत्ती डालकर अच्छी तरह सेकें। गरम टोस्ट के साथ खाएं।",
+                calories = 310,
+                protein = "20g",
+                carbohydrates = "8g",
+                fat = "18g",
+                fiber = "2g",
+                rating = 4.8f,
+                tasteScore = 9.3f,
+                healthScore = 8.5f,
+                tags = "High Protein, Easy",
                 isFavorite = false
             )
         )
@@ -2763,18 +3052,514 @@ fun getPredefinedRecommendations(isHindi: Boolean): List<RecipeEntity> {
                 ingredients = "- 3 tbsp Chia seeds\n- 1 cup Almond milk (unsweetened)\n- 1/2 ripe Avocado\n- 1 tsp Honey\n- 5 Blueberries",
                 instructions = "1. Whisk chia seeds, honey, and almond milk inside a bowl. Keep in the fridge for at least 2 hours.\n2. Layer pureed ripe avocado onto the pudding base.\n3. Add sliced almonds & fresh blueberries on top. Best served cold.",
                 calories = 280,
+                protein = "8g",
+                carbohydrates = "32g",
+                fat = "12g",
+                fiber = "11g",
+                rating = 4.8f,
+                tasteScore = 8.5f,
+                healthScore = 9.2f,
+                tags = "Weight Loss, Vegan",
                 isFavorite = false
             ),
             RecipeEntity(
                 id = "reco_002",
-                name = "Mediterranean Salad Bowl",
+                name = "Kadhai Paneer Magic",
                 category = "Lunch",
-                description = "A colorful high-protein Mediterranean super bowl filled with organic boiled quinoa, rich cherry tomatoes, crunchy cucumber, tossed in lemon vinaigrette.",
-                ingredients = "- 1 cup Cooked Quinoa\n- 1/2 cup Chickpeas\n- 1 Cucumber, diced\n- 5 Olive slices\n- 1 tbsp olive oil\n- 1 tbsp lemon juice",
-                instructions = "1. Boil quinoa completely and let cool down.\n2. Toss diced cucumber, boiled chickpeas, olives, and fresh lemon-olive-oil vinaigrette inside a spacious mixing bowl.\n3. Garnish with mint sprigs. Quick, balanced, organic.",
-                calories = 420,
+                description = "A classic high-protein Indian delicacy prepared with fresh paneer cubes, crunchy diced bell peppers, tomatoes, and organic roasted spices.",
+                ingredients = "- 200g Paneer cubes\n- 1 Bell Pepper, cubed\n- 1 Onion, cubed\n- 2 Tomato puree\n- 1 tsp Kadhai Masala\n- 1 tbsp olive oil",
+                instructions = "1. Heat oil in a pan, lightly sauté onion and bell pepper cubes.\n2. Add tomato puree and kadhai ground spice powder, simmer for 5 mins.\n3. Toss in paneer cubes, salt to taste, and garnish with fresh cilantro.",
+                calories = 380,
+                protein = "18g",
+                carbohydrates = "14g",
+                fat = "28g",
+                fiber = "4g",
+                rating = 4.9f,
+                tasteScore = 9.6f,
+                healthScore = 7.5f,
+                tags = "High Protein, Indian",
+                isFavorite = false
+            ),
+            RecipeEntity(
+                id = "reco_003",
+                name = "Jain Millet Pulav",
+                category = "Lunch",
+                description = "Nutritious root-allergen-free (no onions, no garlic) light pulav made with boiled organic pearl millets, green peas, and bell peppers.",
+                ingredients = "- 1 cup Pearl Millet (soaked)\n- 1/4 cup Green peas\n- 1/2 chopped Bell pepper\n- 1 tsp Desi Ghee\n- Salt, cumin, turmeric, asafoetida",
+                instructions = "1. Boil soaked millets in salt water for 2 whistles in a pressure cooker.\n2. Heat ghee in a skillet, splutter cumin and a pinch of asafoetida.\n3. Add peas and peppers, followed by boiled millets. Stir fry for 3 mins and serve hot.",
+                calories = 260,
+                protein = "9g",
+                carbohydrates = "48g",
+                fat = "5g",
+                fiber = "8g",
+                rating = 4.6f,
+                tasteScore = 8.6f,
+                healthScore = 8.9f,
+                tags = "Jain, Budget, Gluten Free",
+                isFavorite = false
+            ),
+            RecipeEntity(
+                id = "reco_004",
+                name = "Slow Cooked Butter Chicken",
+                category = "Dinner",
+                description = "Juicy tandoori roasted chicken breast chunks simmered in a rich, buttery tomate-cashew gravy with hint of sweet honey.",
+                ingredients = "- 300g Chicken breast\n- 1 cup Tomato puree\n- 1/4 cup Cashew paste\n- 1 tbsp Butter\n- 1 tbsp Fresh cream\n- Fenugreek leaves",
+                instructions = "1. Marinate chicken in yogurt and spices, then bake for 20 mins.\n2. Melt butter, fry tomato paste and cashew puree until oil splits.\n3. Fold in chicken cubes, finish with sweet honey, cream and dried fenugreek leaves.",
+                calories = 490,
+                protein = "38g",
+                carbohydrates = "12g",
+                fat = "32g",
+                fiber = "2g",
+                rating = 4.9f,
+                tasteScore = 9.8f,
+                healthScore = 6.4f,
+                tags = "High Protein, Family Meals",
+                isFavorite = false
+            ),
+            RecipeEntity(
+                id = "reco_005",
+                name = "Stir-Fried Tofu Noodles",
+                category = "Dinner",
+                description = "Wok tossed grain noodles with pan-fried extra firm organic tofu cubes, broccoli cuts, and a low-sodium sweet soy drizzle.",
+                ingredients = "- 100g Grain Noodles\n- 50g Tofu cubes\n- 1/2 cup Broccoli florets\n- 1 tbsp Sweet soy sauce\n- 1 tsp Sesame oil",
+                instructions = "1. Pan fry tofu cubes in a dash of sesame oil until all sides turn golden.\n2. flash fry broccoli in high heat. Toss boiled noodles, fried tofu, and soy sauce.\n3. Flash toss for 2 mins and serve with sesame sprinkle.",
+                calories = 340,
+                protein = "14g",
+                carbohydrates = "52g",
+                fat = "10g",
+                fiber = "4g",
+                rating = 4.7f,
+                tasteScore = 9.1f,
+                healthScore = 7.9f,
+                tags = "Quick Meal, Kid Friendly",
+                isFavorite = false
+            ),
+            RecipeEntity(
+                id = "reco_006",
+                name = "Paneer Bhurji Morning scramble",
+                category = "Breakfast",
+                description = "Scrambled cottage cheese cooked with chopped onions, juicy tomatoes, and green chillies. Ideal muscle-gain morning boost.",
+                ingredients = "- 150g Crumbled Paneer\n- 1 Onion, finely diced\n- 1 Tomato, chopped\n- 1 Green chilli\n- Cilantro, cumin",
+                instructions = "1. Sauté diced onions and chilli in hot pan with oil until light pink.\n2. Soften chopped tomatoes, then add crumbled fresh paneer.\n3. Stir continuously on medium heat for 4 mins. Serve beside toasted wholewheat high fiber bread.",
+                calories = 310,
+                protein = "20g",
+                carbohydrates = "8g",
+                fat = "18g",
+                fiber = "2g",
+                rating = 4.8f,
+                tasteScore = 9.3f,
+                healthScore = 8.5f,
+                tags = "High Protein, Easy",
+                isFavorite = false
+            ),
+            RecipeEntity(
+                id = "reco_007",
+                name = "Double-Protein Quinoa Bowl",
+                category = "Lunch",
+                description = "High fiber and extreme plant protein bowl consisting of red organic quinoa, edamame beans, chickpeas, and a raw tahini dressing.",
+                ingredients = "- 1 cup Quinoa\n- 1/2 cup Edamame beans\n- 1/4 cup Chickpeas\n- 2 tbsp Tahini paste\n- Lemon juice",
+                instructions = "1. Mash tahini with warm water and lemon juice to formulate the base sauce.\n2. Mix boiled grains, fresh beans, and soft chickpeas in a large dining bowl.\n3. Pour tahini paste over content. Ready to fuel muscles.",
+                calories = 320,
+                protein = "16g",
+                carbohydrates = "44g",
+                fat = "9g",
+                fiber = "10g",
+                rating = 4.6f,
+                tasteScore = 7.8f,
+                healthScore = 9.6f,
+                tags = "Weight Loss, Muscle Gain",
+                isFavorite = false
+            ),
+            RecipeEntity(
+                id = "reco_008",
+                name = "Budget Lentil Quesadilla",
+                category = "Lunch",
+                description = "Low-cost high-energy Mexican quesadilla filled with spiced split red lentils, melted cheddar cheese, on stone-ground corn tortilla.",
+                ingredients = "- 1 Corn tortilla\n- 1/2 cup Boiled Lentils\n- 1/4 cup Cheddar cheese\n- Taco seasoning\n- Sallsa dip",
+                instructions = "1. Heat boiled split lentils with a spoonful of taco spices in a pan.\n2. Layer on a flat tortilla, top with shredded cheddar, fold in half.\n3. Toast on non-stick pan until cheese melts and edges turn crunchy. Serve with tomato salsa.",
+                calories = 350,
+                protein = "17g",
+                carbohydrates = "38g",
+                fat = "11g",
+                fiber = "7g",
+                rating = 4.5f,
+                tasteScore = 8.9f,
+                healthScore = 8.0f,
+                tags = "Budget Friendly, High Protein",
+                isFavorite = false
+            ),
+            RecipeEntity(
+                id = "reco_009",
+                name = "Baked Oats Cookie Bars",
+                category = "Snacks",
+                description = "Perfect organic snacks crafted out of rolled grain oats, organic ripe banana, honey, roasted cocoa nibs, no refined sugar.",
+                ingredients = "- 1 cup Rolled Oats\n- 1 ripe Banana, mashed\n- 2 tbsp Honey\n- 1 tbsp Chocolate chips\n- Pinch of Cinnamon",
+                instructions = "1. Mix mashed banana, raw honey, cinnamon and rolled oats inside a container.\n2. Flat-press into a small square baking dish, sprinkle choco chips.\n3. Bake in preheated oven at 180C for 15 mins. Slice into snack bars once cooled.",
+                calories = 180,
+                protein = "4g",
+                carbohydrates = "30g",
+                fat = "5g",
+                fiber = "5g",
+                rating = 4.4f,
+                tasteScore = 8.8f,
+                healthScore = 8.5f,
+                tags = "Kid Friendly, Budget Meal",
                 isFavorite = false
             )
         )
+    }
+}
+
+// ---------------- PREMIUM ONBOARDING SCREEN ----------------
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun OnboardingScreen(viewModel: CookMateViewModel) {
+    val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
+    val isHindi = userProfile.language == "Hindi"
+
+    var currentStep by remember { mutableStateOf(0) }
+
+    // State hold choices
+    var foodPref by remember { mutableStateOf("Vegetarian") }
+    var recPref by remember { mutableStateOf("Balanced") }
+    var fitnessGoal by remember { mutableStateOf("Healthy Lifestyle") }
+    val selectedCuisines = remember { mutableStateListOf("Indian", "Italian") }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(24.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // STEP PROGRESS HEADER
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = if (isHindi) "कुकमेट में आपका स्वागत है" else "Welcome to CookMate",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    for (i in 0..3) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(
+                                    if (i <= currentStep) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                        )
+                    }
+                }
+            }
+
+            // CENTRAL WIZARD CHANGER
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(vertical = 16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                when (currentStep) {
+                    0 -> {
+                        // Food Preference Selection
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Text(
+                                text = if (isHindi) "अपनी आहार प्राथमिकता चुनें" else "Choose Your Food Preference",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = if (isHindi) "यह आपकी स्वाद सूची को परिष्कृत करता है।" else "This filters and customizes recipes matching your dietary lifestyle.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+
+                            val fOptions = listOf(
+                                "Vegetarian" to (if (isHindi) "शाकाहारी (Veg)" else "Vegetarian"),
+                                "Non-Vegetarian" to (if (isHindi) "मांसाहारी (Non-Veg)" else "Non-Vegetarian"),
+                                "Vegan" to (if (isHindi) "वेगान (Vegan)" else "Vegan"),
+                                "Jain" to (if (isHindi) "जैन (No Garlic/Onion)" else "Jain Diet")
+                            )
+
+                            fOptions.forEach { (key, label) ->
+                                val selected = foodPref == key
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(60.dp)
+                                        .clickable { foodPref = key },
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                                    ),
+                                    border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            Icon(
+                                                imageVector = when(key) {
+                                                    "Non-Vegetarian" -> Icons.Filled.Restaurant
+                                                    "Vegan" -> Icons.Filled.Yard
+                                                    else -> Icons.Filled.Eco
+                                                },
+                                                contentDescription = key,
+                                                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(text = label, fontWeight = FontWeight.Bold)
+                                        }
+                                        if (selected) {
+                                            Icon(imageVector = Icons.Filled.CheckCircle, contentDescription = "Checked", tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    1 -> {
+                        // Recommendation Preference
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Text(
+                                text = if (isHindi) "सिफारिश प्राथमिकता" else "Smart Recommendation Mode",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = if (isHindi) "तय करें कि हम आपके भोजन सुझावों को कैसे क्रमबद्ध करें।" else "Decide how our Netflix-style engine ranks recommendations.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+
+                            val rOptions = listOf(
+                                "Taste First" to (if (isHindi) "स्वाद पहले (Taste First)" else "Taste First"),
+                                "Health First" to (if (isHindi) "स्वास्थ्य पहले (Health First)" else "Health First"),
+                                "Balanced" to (if (isHindi) "संतुलित (Balanced Combo)" else "Balanced Combo")
+                            )
+
+                            rOptions.forEach { (key, label) ->
+                                val selected = recPref == key
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(64.dp)
+                                        .clickable { recPref = key },
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                                    ),
+                                    border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text(text = label, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = when (key) {
+                                                    "Taste First" -> if (isHindi) "मसालेदार स्वाद और लोकप्रियता को प्राथमिकता" else "Prioritizes flavor rating and user likeness"
+                                                    "Health First" -> if (isHindi) "कम कैलोरी और माइक्रोन्यूट्रिएंट्स पर ध्यान" else "Prioritizes high protein, raw fiber and low-cal yield"
+                                                    else -> if (isHindi) "स्वाद और स्वास्थ्य दोनों का सटीक संगम" else "Blends nutrition profile with rich culinary texture"
+                                                },
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        if (selected) {
+                                            Icon(imageVector = Icons.Filled.CheckCircle, contentDescription = "Checked", tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    2 -> {
+                        // Fitness Goals
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(
+                                text = if (isHindi) "अपने फिटनेस लक्ष्य चुनें" else "What is Your Primary Goal?",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = if (isHindi) "भोजन योजनाओं को कैलिब्रेट करने के लिए।" else "To auto-configure your Daily Calories and Nutrition coach.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+
+                            val fitnessGoals = listOf(
+                                "Weight Loss" to (if (isHindi) "वजन घटाना (Weight Loss)" else "Weight Loss"),
+                                "Muscle Gain" to (if (isHindi) "मांसपेशियों का विकास (Muscle Gain)" else "Muscle Gain"),
+                                "Healthy Lifestyle" to (if (isHindi) "स्वस्थ दिनचर्या (Healthy Life)" else "Healthy Lifestyle"),
+                                "Family Meals" to (if (isHindi) "परिवार के लिए भोजन (Family Meals)" else "Family Meals"),
+                                "Budget Friendly" to (if (isHindi) "बजट अनुकूल (Budget Friendly)" else "Budget Friendly")
+                            )
+
+                            fitnessGoals.forEach { (key, label) ->
+                                val selected = fitnessGoal == key
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(54.dp)
+                                        .clickable { fitnessGoal = key },
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                                    ),
+                                    border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            Icon(
+                                                imageVector = when(key) {
+                                                    "Weight Loss" -> Icons.Filled.Spa
+                                                    "Muscle Gain" -> Icons.Filled.Star
+                                                    "Family Meals" -> Icons.Filled.Group
+                                                    "Budget Friendly" -> Icons.Filled.Savings
+                                                    else -> Icons.Filled.Home
+                                                },
+                                                contentDescription = key,
+                                                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(text = label, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        }
+                                        if (selected) {
+                                            Icon(imageVector = Icons.Filled.CheckCircle, contentDescription = "Checked", tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    3 -> {
+                        // Favorite Cuisines
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Text(
+                                text = if (isHindi) "मनपसंद व्यंजन शैलियां" else "Favorite Cuisines",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = if (isHindi) "बहु-चयन करें जिसे आप सबसे ज्यादा पसंद करते हैं।" else "Incorporate regional specialties to recommend. Multi-select active.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+
+                            val cuisines = listOf("Indian", "Chinese", "Italian", "Mexican", "Other")
+
+                            FlowRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                cuisines.forEach { cuisine ->
+                                    val isSelected = selectedCuisines.contains(cuisine)
+                                    FilterChip(
+                                        selected = isSelected,
+                                        onClick = {
+                                            if (isSelected) {
+                                                if (selectedCuisines.size > 1) {
+                                                    selectedCuisines.remove(cuisine)
+                                                }
+                                            } else {
+                                                selectedCuisines.add(cuisine)
+                                            }
+                                        },
+                                        label = {
+                                            Text(
+                                                text = if (isHindi) {
+                                                    when(cuisine) {
+                                                        "Indian" -> "भारतीय (Indian)"
+                                                        "Chinese" -> "चीनी (Chinese)"
+                                                        "Italian" -> "इतालवी (Italian)"
+                                                        "Mexican" -> "मैक्सिकन (Mexican)"
+                                                        else -> "अन्य (Other)"
+                                                    }
+                                                } else cuisine,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(8.dp)
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // NAVIGATION BUTTONS ROW
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (currentStep > 0) {
+                    OutlinedButton(
+                        onClick = { currentStep-- },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(text = if (isHindi) "पीछे" else "Back")
+                    }
+                } else {
+                    Spacer(modifier = Modifier.width(48.dp))
+                }
+
+                Button(
+                    onClick = {
+                        if (currentStep < 3) {
+                            currentStep++
+                        } else {
+                            viewModel.completeOnboarding(
+                                dietaryPref = foodPref,
+                                recPreference = recPref,
+                                fitnessGoal = fitnessGoal,
+                                preferredCuisines = selectedCuisines.joinToString(", ")
+                            )
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = if (currentStep == 3) {
+                            if (isHindi) "प्रोफाइल तैयार है" else "Get Started"
+                        } else {
+                            if (isHindi) "अगला" else "Next"
+                        }
+                    )
+                }
+            }
+        }
     }
 }

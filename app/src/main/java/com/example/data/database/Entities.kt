@@ -11,8 +11,9 @@ data class UserProfileEntity(
     val gender: String = "Male",
     val height: Double = 175.0,
     val weight: Double = 70.0,
-    val fitnessGoal: String = "Balanced Nutrition",
+    val fitnessGoal: String = "Healthy Lifestyle",
     val dietaryPref: String = "None",
+    val recPreference: String = "Balanced", // Taste First, Health First, Balanced
     val allergies: String = "None",
     val preferredCuisines: String = "Indian, Italian, Continental",
     val language: String = "English",
@@ -21,7 +22,8 @@ data class UserProfileEntity(
     val caloryTarget: Int = 2000,
     val proteinTarget: Int = 120, // grams
     val carbTarget: Int = 220,    // grams
-    val fatTarget: Int = 65        // grams
+    val fatTarget: Int = 65,       // grams
+    val isOnboarded: Boolean = false
 )
 
 // ---------------- RECIPE ENTITY ----------------
@@ -46,6 +48,9 @@ data class RecipeEntity(
     val imageUrl: String = "",
     val source: String = "AI Chef Assistant",
     val rating: Float = 4.5f,
+    val tasteScore: Float = 8.5f,
+    val healthScore: Float = 8.0f,
+    val tags: String = "High Protein, Easy",
     val isFavorite: Boolean = false,
     val isLeftoverIdea: Boolean = false,
     val timestamp: Long = System.currentTimeMillis()
